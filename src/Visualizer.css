@@ -1,0 +1,9 @@
+.visualizer-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  touch-action: pan-y;
+  background: #101014;
+}

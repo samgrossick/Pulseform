@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.cache/
+*.local
+test-results/
+public/models/demucs/*.bin
+public/models/demucs/manifest.json
+*.tsbuildinfo
