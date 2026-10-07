@@ -46,8 +46,8 @@ describe('AudioResponse', () => {
     expect(update(response, tone).pulse).toBeGreaterThan(.5);
     let held = update(response, tone);
     for (let i = 0; i < 180; i++) held = update(response, tone);
-    expect(held.bass).toBeGreaterThan(.75);
-    expect(held.energy).toBeGreaterThan(.75);
+    expect(held.bass).toBeGreaterThan(.65);
+    expect(held.energy).toBeGreaterThan(.65);
     expect(held.pulse).toBeLessThan(.001);
     expect(held.flux).toBeLessThan(.001);
   });
@@ -59,12 +59,12 @@ describe('AudioResponse', () => {
     expect(update(response, frame(.4)).pulse).toBeGreaterThan(.8);
     response.reset();
     const middle = update(response, frame(.35, 1000));
-    expect(middle.mid).toBeGreaterThan(.6);
+    expect(middle.mid).toBeGreaterThan(.55);
     expect(middle.bass).toBe(0);
     expect(middle.pulse).toBe(0);
     response.reset();
     const high = update(response, frame(.2, 7000));
-    expect(high.treble).toBeGreaterThan(.6);
+    expect(high.treble).toBeGreaterThan(.5);
     expect(high.bass).toBe(0);
     expect(high.mid).toBe(0);
   });
@@ -76,6 +76,27 @@ describe('AudioResponse', () => {
     expect(features.bass).toBe(0);
     expect(features.energy).toBe(0);
     expect(features.pulse).toBe(0);
+  });
+
+  it('preserves quiet/loud differences rather than normalising both to full strength', () => {
+    const response = new AudioResponse();
+    let quiet = update(response, frame(.03));
+    for (let i = 0; i < 360; i++) quiet = update(response, frame(.03));
+    let loud = update(response, frame(.3));
+    for (let i = 0; i < 360; i++) loud = update(response, frame(.3));
+    expect(loud.bass).toBeGreaterThan(quiet.bass * 2.5);
+    expect(loud.energy).toBeGreaterThan(quiet.energy * 2.5);
+  });
+
+  it('primes a seek without an artificial beat but detects the next actual kick', () => {
+    const response = new AudioResponse();
+    const passage = frame(.2);
+    response.prime(passage.frequency, passage.waveform, sampleRate, fftSize);
+    const first = update(response, passage);
+    expect(first.pulse).toBe(0);
+    expect(first.flux).toBe(0);
+    expect(first.bass).toBeGreaterThan(0);
+    expect(update(response, frame(.55)).pulse).toBeGreaterThan(.8);
   });
 
   it('has similar attack and decay envelopes at different render frame rates', () => {
@@ -94,18 +115,20 @@ describe('AudioResponse', () => {
 });
 
 describe('LiquidMotion', () => {
-  it('spreads a sudden onset into gradual motion and a long, smooth release', () => {
+  it('registers an onset quickly without a one-frame jump, then decays smoothly', () => {
     const motion = new LiquidMotion();
     const loud = { ...silentAudioFeatures(), bass: 1, pulse: 1, energy: 1 };
     const first = motion.update(loud, dt);
-    expect(first.bass).toBeLessThan(.10);
-    expect(first.pulse).toBeLessThan(.09);
+    expect(first.bass).toBeGreaterThan(.3);
+    expect(first.bass).toBeLessThan(.5);
+    expect(first.pulse).toBeGreaterThan(.4);
+    expect(first.pulse).toBeLessThan(.6);
     let rising = first;
-    for (let i = 0; i < 11; i++) rising = motion.update(loud, dt);
-    expect(rising.bass).toBeGreaterThan(.60);
-    expect(rising.bass).toBeLessThan(.75);
+    for (let i = 0; i < 5; i++) rising = motion.update(loud, dt);
+    expect(rising.bass).toBeGreaterThan(.9);
+    expect(rising.bass).toBeLessThan(1);
     const release = motion.update(silentAudioFeatures(), dt);
-    expect(release.bass).toBeGreaterThan(rising.bass * .97);
+    expect(release.bass).toBeGreaterThan(rising.bass * .9);
     let quiet = release;
     for (let i = 0; i < 360; i++) quiet = motion.update(silentAudioFeatures(), dt);
     expect(quiet.bass).toBeLessThan(.001);

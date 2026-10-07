@@ -40,6 +40,8 @@ export class AudioEngine {
   private running = false;
   mix = defaultMix();
   loop = false;
+  transportRevision = 0;
+  transportReadyAt = Infinity;
   constructor() {
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.82;
@@ -60,6 +62,8 @@ export class AudioEngine {
     return current;
   }
   load(buffer: AudioBuffer, stems: Partial<Record<Stem, AudioBuffer>> = {}) {
+    this.transportRevision++;
+    this.transportReadyAt = Infinity;
     this.pause(); this.original = buffer; this.stems = stems; this.offset = 0;
     this.mix = defaultMix();
   }
@@ -69,6 +73,9 @@ export class AudioEngine {
     if (this.running || !this.original) return;
     if (this.offset >= this.duration) this.offset = 0;
     this.startedAt = this.context.currentTime + 0.015;
+    // Allow the fresh PCM/FFT windows and limiter startup to settle before
+    // seeding onset history. Regular beat detection has no such waiting period.
+    this.transportReadyAt = this.startedAt + 3 * this.analyser.fftSize / this.context.sampleRate;
     this.running = true;
     const entries = Object.entries(this.stems).length ? Object.entries(this.stems) : [['original', this.original]];
     for (const [name, buffer] of entries as [string, AudioBuffer][]) {
@@ -92,16 +99,22 @@ export class AudioEngine {
     this.sources = []; this.gains.clear();
   }
   async seek(seconds: number) {
+    this.transportRevision++;
+    this.transportReadyAt = Infinity;
     const wasPlaying = this.running; this.pause();
     this.offset = Math.max(0, Math.min(seconds, this.duration));
     if (wasPlaying) await this.play();
   }
   async setLoop(loop: boolean) {
+    this.transportRevision++;
+    this.transportReadyAt = Infinity;
     const position = this.position; const wasPlaying = this.running;
     this.pause(); this.loop = loop; this.offset = position;
     if (wasPlaying) await this.play();
   }
   async setStems(stems: Record<Stem, AudioBuffer>) {
+    this.transportRevision++;
+    this.transportReadyAt = Infinity;
     const position = this.position; const wasPlaying = this.running;
     this.pause(); this.stems = stems; this.offset = position;
     if (wasPlaying) await this.play();

@@ -19,6 +19,7 @@ type Props = {
   analyser: AnalyserNode | null;
   playing: boolean;
   canvasRef?: RefObject<HTMLCanvasElement | null>;
+  getTransport?: () => { position: number; revision: number; readyAt?: number };
 };
 
 const vertexSource = `
@@ -48,6 +49,16 @@ const float PI = 3.14159265359;
 
 mat2 rotate(float a) { return mat2(cos(a), -sin(a), sin(a), cos(a)); }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+// Broad interpolation across real log-frequency bands produces fluid, local folds.
+float spectrumAt(float x) {
+  x = clamp(x, .025, .975);
+  return (texture2D(uSpectrum, vec2(x, .5)).r * .34
+    + texture2D(uSpectrum, vec2(x - .024, .5)).r * .23
+    + texture2D(uSpectrum, vec2(x + .024, .5)).r * .23
+    + texture2D(uSpectrum, vec2(x - .050, .5)).r * .10
+    + texture2D(uSpectrum, vec2(x + .050, .5)).r * .10) * uMotion;
+}
 
 // A deliberately limited, ink-like colour spectrum, rather than rainbow noise.
 vec3 ink(float t) {
@@ -85,7 +96,7 @@ void main() {
   float crest = uDynamics.w * strength;
   p -= uPointer * .045;
   // Audio changes the silhouette and its internal flow, not merely the exposure.
-  p /= 1. + bass * .075 + pulse * .075;
+  p /= 1. + bass * .13 + pulse * .07;
   float density = 12. + uDetail * 22.;
   vec3 background = mix(vec3(.040, .040, .050), vec3(.069, .068, .080), .6);
   float haze = exp(-length(p * vec2(.7, 1.)) * 1.8);
@@ -105,14 +116,16 @@ void main() {
     q.y += (.105 + bass * .04) * sin(q.x * 3.5 + t * .24 + pulse * .18);
     float r = length(q);
     float a = atan(q.y, q.x);
+    float spectralFold = spectrumAt(.50 + .46 * cos(a + r * .7)) * strength;
+    float spectralCurl = spectrumAt(.50 + .46 * sin(a - r * .8)) * strength;
     float warp = (.080 + bass * .035 + pulse * .025) * sin(a * 3. + t * .23 + r * 3.5)
       + (.035 + mid * .025) * cos(a * 2. - t * .17 + r * 4.)
       + treble * .006 * sin(a * 9. + r * 7. - t * .6);
-    float surface = r + warp * smoothstep(.05, .4, r);
+    float surface = r + (warp - spectralFold * .20 + spectralCurl * .07) * smoothstep(.05, .4, r);
     float outer = .80 + bass * .025;
     float inner = .08 + pulse * .025 + .022 * sin(a * 2. + t * .18);
     mask = smoothstep(inner, inner + .095, surface) * (1. - smoothstep(outer - .075, outer + .05, surface));
-    float curl = (.13 + mid * .045) * sin(a + r * (4. + bass * .65) + t * .18);
+    float curl = (.13 + mid * .075 + spectralCurl * .10) * sin(a + r * (4. + bass * .65) + t * .18);
     field = (surface + curl * smoothstep(.10, .7, r)) * density - t * .27
       + flux * .09 * sin(a * 5. + r * 8. - t * .5);
     shade = .36 + .64 * pow(.5 + .5 * cos(a - .9 + r * 4.), 1.5);
@@ -124,12 +137,15 @@ void main() {
     vec2 q = rotate(t * .045 + mid * .12) * p * 1.04;
     float r = length(q);
     float a = atan(q.y, q.x);
+    float spectralPetal = spectrumAt(.5 + .46 * cos(a + r)) * strength;
+    float spectralVein = spectrumAt(.5 + .46 * sin(a - r)) * strength;
     float petals = .72 * sin(a * 5. + r * (3. + mid) - t * .24)
       + .28 * sin(a * 3. - r * 2. + t * .16);
-    float surface = r / (1. + (.22 + bass * .065) * petals
-      + (.045 + treble * .018) * sin(a * 8. + t * .23));
+    float surface = r / (1. + (.22 + bass * .09) * petals
+      + spectralPetal * .27 + spectralVein * .10 * sin(a * 3. + r * 2.)
+      + (.045 + treble * .025) * sin(a * 8. + t * .23));
     mask = smoothstep(.035, .13 + pulse * .06, surface) * (1. - smoothstep(.68 + bass * .04, .73 + bass * .04, surface));
-    field = surface * density + sin(a * 3. + surface * (6. + mid * 2.) - t * .24) * (.7 + mid * .45)
+    field = surface * density + sin(a * 3. + surface * (6. + mid * 2.) - t * .24) * (.7 + mid * .60 + spectralVein * .8)
       - t * .31 + flux * .08 * sin(a * 9. - t * .3);
     shade = .42 + .6 * pow(.5 + .5 * cos(a * 6. + r * 5. - t * .3), 1.7);
     chroma = surface * .85 + petals * .095 + t * .012;
@@ -140,8 +156,12 @@ void main() {
     float shape = 2.7 - bass * .35 + treble * .12;
     float r = pow(pow(abs(q.x), shape) + pow(abs(q.y), shape), 1. / shape);
     float a = atan(q.y, q.x);
+    float spectralWall = spectrumAt(.5 + .46 * cos(a + r * .5)) * strength;
+    float spectralTwist = spectrumAt(.5 + .46 * sin(a - r * .7)) * strength;
+    r *= 1. - spectralWall * .25;
     float z = log(max(.065, r)) * .34;
     field = z * density - t * .8 + (0.8 + mid * .6) * sin(a * 3. + z * 4. + t * .15)
+      + spectralTwist * .7 * sin(a * 2. + z * 3.)
       + treble * .12 * sin(a * 8. + z * 6. - t * .4);
     mask = smoothstep(.065, .18, r) * (1. - smoothstep(1.15, 2.1, r));
     shade = (.5 + .5 * smoothstep(.08, .8, r)) * (.62 + .38 * sin(a * 2. + z * 2.));
@@ -155,10 +175,11 @@ void main() {
       + texture2D(uSpectrum, vec2(tx + .012, .5)).g * .24
       + texture2D(uSpectrum, vec2(tx - .025, .5)).g * .06
       + texture2D(uSpectrum, vec2(tx + .025, .5)).g * .06) * 2. - 1.) * uMotion;
-    float amplitude = texture2D(uSpectrum, vec2(tx, .5)).r * uMotion;
+    float amplitude = spectrumAt(tx) * strength;
     float carrier = sin(q.x * (3.4 + bass * 1.7) - t * .65) * (.12 + bass * .12)
       + sin(q.x * (6. + mid * 3.) + t * .35) * (.035 + mid * .055);
-    float center = carrier + wave * (.48 + energy * .28) * strength;
+    float center = carrier + wave * (.48 + energy * .28) * strength
+      + amplitude * .18 * sin(q.x * 2. + t * .12);
     float envelope = pow(max(0., 1. - pow(abs(q.x) / 1.13, 2.)), .65);
     float y = abs(q.y - center);
     float surface = y / max(.08, envelope);
@@ -191,10 +212,10 @@ const sceneIds = { currents: 0, bloom: 1, tunnel: 2, scope: 3 };
 const paletteIds = { solar: 0, acid: 1, moon: 2, custom: 3 };
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
 
-export default function Visualizer({ settings, analyser, playing, canvasRef }: Props) {
+export default function Visualizer({ settings, analyser, playing, canvasRef, getTransport }: Props) {
   const localRef = useRef<HTMLCanvasElement>(null);
-  const latest = useRef({ settings, analyser, playing });
-  latest.current = { settings, analyser, playing };
+  const latest = useRef({ settings, analyser, playing, getTransport });
+  latest.current = { settings, analyser, playing, getTransport };
 
   useEffect(() => {
     const canvas = localRef.current;
@@ -221,6 +242,15 @@ export default function Visualizer({ settings, analyser, playing, canvasRef }: P
     let waveformData: Float32Array<ArrayBuffer> = new Float32Array(0);
     let audioSource: AnalyserNode | null = null;
     let visualAnalyser: AnalyserNode | null = null;
+    let transportRevision: number | undefined;
+    let transportPosition: number | undefined;
+    let primeNextSample = false;
+    let primeAfter = 0;
+    let primeUsesTransportClock = false;
+    let wasPlaying = false;
+    let historyResets = 0;
+    const spectrumHistory = new Float32Array(128);
+    const waveformHistory = new Float32Array(128);
     const spectrum = new Uint8Array(128 * 4);
     for (let i = 0; i < 128; i++) {
       spectrum[i * 4 + 1] = 128;
@@ -317,6 +347,10 @@ export default function Visualizer({ settings, analyser, playing, canvasRef }: P
 
     const sampleAudio = (dt: number) => {
       const state = latest.current;
+      // A loaded/paused node has no fresh sample window yet. Start its priming
+      // deadline when playback actually begins, including pause/resume.
+      let resetHistory = state.playing && !wasPlaying;
+      wasPlaying = state.playing;
       if (state.analyser !== audioSource) {
         if (audioSource && visualAnalyser) audioSource.disconnect(visualAnalyser);
         visualAnalyser?.disconnect();
@@ -325,31 +359,86 @@ export default function Visualizer({ settings, analyser, playing, canvasRef }: P
         if (audioSource && visualAnalyser) {
           // This silent analysis branch preserves the main graph and meter smoothing.
           visualAnalyser.fftSize = 2048;
-          visualAnalyser.smoothingTimeConstant = .12;
+          visualAnalyser.smoothingTimeConstant = .05;
           audioSource.connect(visualAnalyser);
           frequencyData = new Float32Array(visualAnalyser.frequencyBinCount).fill(-Infinity);
           waveformData = new Float32Array(visualAnalyser.fftSize);
         }
+        resetHistory = true;
+      }
+      const transport = state.getTransport?.();
+      const loopRestarted = !!transport && transport.revision === transportRevision
+        && transportPosition !== undefined && transport.position < transportPosition - .12;
+      if (transport && (transport.revision !== transportRevision
+        || loopRestarted)) {
+        transportRevision = transport.revision;
+        elapsed = Math.max(0, Number.isFinite(transport.position) ? transport.position : 0) * .45 * clamp(state.settings.speed, 0, 2);
+        resetHistory = true;
+      }
+      if (transport) transportPosition = transport.position;
+      if (resetHistory) {
         response.reset();
         liquidMotion.reset();
+        features = silentAudioFeatures();
+        visualFeatures = silentAudioFeatures();
+        spectrumHistory.fill(0);
+        waveformHistory.fill(0);
+        for (let i = 0; i < 128; i++) { spectrum[i * 4] = 0; spectrum[i * 4 + 1] = 128; }
+        primeNextSample = true;
+        // The engine knows when its source was actually scheduled, after resume.
+        // Its readyAt includes fresh PCM/FFT windows; Infinity means scheduling
+        // is still pending. Standalone callers and loops use a local window.
+        primeUsesTransportClock = transport?.readyAt !== undefined && !loopRestarted;
+        primeAfter = primeUsesTransportClock ? transport!.readyAt! : (visualAnalyser?.context.currentTime ?? 0)
+          + 2 * (visualAnalyser?.fftSize ?? 2048) / (visualAnalyser?.context.sampleRate ?? 44100) + .015;
+        historyResets++;
+        canvas.dataset.transportRevision = String(transportRevision ?? 0);
+        canvas.dataset.audioHistoryResets = String(historyResets);
       }
       const node = visualAnalyser;
       if (node && state.playing && state.settings.reactive) {
+        if (primeNextSample && primeUsesTransportClock && transport?.readyAt !== undefined) primeAfter = transport.readyAt;
         node.getFloatFrequencyData(frequencyData);
         node.getFloatTimeDomainData(waveformData);
+        if (primeNextSample && node.context.currentTime < primeAfter) {
+          frequencyData.fill(-Infinity);
+          waveformData.fill(0);
+        } else if (primeNextSample) {
+          response.prime(frequencyData, waveformData, node.context.sampleRate, node.fftSize);
+          primeNextSample = false;
+        }
         features = response.update(frequencyData, waveformData, node.context.sampleRate, node.fftSize, dt);
         const hzPerBin = node.context.sampleRate / node.fftSize;
-        const waveGain = Math.min(3.5, .32 / Math.max(.04, features.rms));
-        const blend = 1 - Math.exp(-dt / .12);
+        const waveBlend = 1 - Math.exp(-dt / .045);
+        const gate = clamp((features.rms - .0006) / .004);
         for (let i = 0; i < 128; i++) {
-          const frequency = 30 * Math.pow(16000 / 30, i / 127);
-          const db = frequencyData[Math.min(frequencyData.length - 1, Math.round(frequency / hzPerBin))];
-          spectrum[i * 4] += Math.round((clamp((db + 90) / 70) * 255 - spectrum[i * 4]) * blend);
+          const low = 30 * Math.pow(16000 / 30, Math.max(0, i - .65) / 127);
+          const high = 30 * Math.pow(16000 / 30, Math.min(127, i + .65) / 127);
+          const start = Math.min(frequencyData.length - 1, Math.max(1, Math.floor(low / hzPerBin)));
+          const end = Math.min(frequencyData.length, Math.max(start + 1, Math.ceil(high / hzPerBin)));
+          let power = 0;
+          for (let bin = start; bin < end; bin++) {
+            const db = frequencyData[bin];
+            if (Number.isFinite(db)) power += Math.pow(10, db / 10);
+          }
+          // Absolute linear energy retains differences in loudness; it never stretches
+          // a quiet/noisy spectrum to full scale or clips all audible bins to white.
+          const magnitude = (1 - Math.exp(-Math.sqrt(power) * 12)) * gate;
+          const blend = 1 - Math.exp(-dt / (magnitude > spectrumHistory[i] ? .035 : .16));
+          spectrumHistory[i] += (magnitude - spectrumHistory[i]) * blend;
+          spectrum[i * 4] = Math.round(spectrumHistory[i] * 255);
           const sample = waveformData[Math.min(waveformData.length - 1, Math.floor(i / 127 * (waveformData.length - 1)))];
-          spectrum[i * 4 + 1] += Math.round((clamp(sample * waveGain * .5 + .5) * 255 - spectrum[i * 4 + 1]) * blend);
+          waveformHistory[i] += (sample - waveformHistory[i]) * waveBlend;
+          spectrum[i * 4 + 1] = Math.round(clamp(waveformHistory[i] * .8 + .5) * 255);
         }
       } else {
-        for (let i = 0; i < 128; i++) { spectrum[i * 4] = 0; spectrum[i * 4 + 1] = 128; }
+        const decay = state.settings.reactive ? Math.exp(-dt / .16) : 0;
+        for (let i = 0; i < 128; i++) {
+          spectrumHistory[i] *= decay;
+          waveformHistory[i] *= decay;
+          spectrum[i * 4] = Math.round(spectrumHistory[i] * 255);
+          spectrum[i * 4 + 1] = Math.round(clamp(waveformHistory[i] * .8 + .5) * 255);
+        }
         if (!state.settings.reactive) {
           response.reset();
           liquidMotion.reset();
@@ -365,6 +454,9 @@ export default function Visualizer({ settings, analyser, playing, canvasRef }: P
       canvas.dataset.audioBass = features.bass.toFixed(3);
       canvas.dataset.audioPulse = features.pulse.toFixed(3);
       canvas.dataset.audioEnergy = features.energy.toFixed(3);
+      canvas.dataset.audioMid = features.mid.toFixed(3);
+      canvas.dataset.audioTreble = features.treble.toFixed(3);
+      canvas.dataset.spectrumPeak = Math.max(...spectrumHistory).toFixed(3);
     };
 
     const drawFallback = (s: VisualizerSettings) => {
@@ -381,11 +473,20 @@ export default function Visualizer({ settings, analyser, playing, canvasRef }: P
       ctx.save();
       ctx.translate(width / 2 + smoothX * unit * .04, height / 2 + smoothY * unit * .04);
       ctx.rotate((s.scene === 'currents' ? -.36 + Math.sin(elapsed * .12) * .15 : s.scene === 'scope' ? -.12 : elapsed * .045) + mid * .12);
-      ctx.scale(1 + bass * .075 + pulse * .075, 1 + bass * .075 + pulse * .075);
+      ctx.scale(1 + bass * .13 + pulse * .07, 1 + bass * .13 + pulse * .07);
       const hues = s.palette === 'solar' ? [16, 32, 275, 258] : s.palette === 'acid' ? [78, 100, 155, 245] : [220, 192, 278, 250];
       const count = Math.round(20 + clamp(s.detail) * 26);
       ctx.lineWidth = Math.max(1.2, unit / 155);
       ctx.shadowBlur = unit * .012;
+      const spectrumAt = (position: number) => {
+        const sample = (x: number) => {
+          const bin = clamp(x) * 127;
+          const left = Math.floor(bin);
+          return spectrumHistory[left] * (1 - (bin - left)) + spectrumHistory[Math.min(127, left + 1)] * (bin - left);
+        };
+        return (sample(position) * .34 + sample(position - .024) * .23 + sample(position + .024) * .23
+          + sample(position - .05) * .1 + sample(position + .05) * .1) * drive;
+      };
       for (let i = 0; i < count; i++) {
         const f = i / count;
         ctx.strokeStyle = s.palette === 'custom' ? s.customColors[Math.min(3, Math.floor(f * 4))] : `hsla(${hues[Math.min(3, Math.floor(f * 4))]}, 75%, ${44 + Math.sin(f * Math.PI) * 24}%, ${.40 + clamp(s.intensity) * .45})`;
@@ -399,15 +500,20 @@ export default function Visualizer({ settings, analyser, playing, canvasRef }: P
           if (s.scene === 'scope') {
             x = (j / 240 * 2 - 1) * unit * 1.1;
             const waveIndex = Math.min(127, Math.floor(j / 240 * 127));
+            const spectralWave = spectrumAt(j / 240);
             y = Math.sin(x / unit * (3.4 + mid) - elapsed * .65) * unit * (.12 + bass * .12)
               + (spectrum[waveIndex * 4 + 1] / 255 * 2 - 1) * unit * .55 * drive
-              + (f - .5) * unit * (.65 + bass * .2) * Math.sqrt(Math.max(0, 1 - (x / unit / 1.1) ** 2));
+              + (f - .5) * unit * (.65 + bass * .2 + spectralWave * .32) * Math.sqrt(Math.max(0, 1 - (x / unit / 1.1) ** 2))
+              + spectralWave * unit * .18 * Math.sin(x / unit * 2 + elapsed * .12);
           } else {
+            const spectralFold = spectrumAt(.5 + .46 * Math.cos(a + f * .7));
+            const spectralCurl = spectrumAt(.5 + .46 * Math.sin(a - f * .8));
             if (s.scene === 'bloom') r *= 1 + (Math.sin(a * 5 + f * (3 + mid) - elapsed * .24) * .72 + Math.sin(a * 3 - f * 2 + elapsed * .16) * .28) * (.22 + bass * .065);
             else if (s.scene === 'tunnel') r = Math.pow(1.03 - ((f + elapsed * .025) % 1), 1.8) * unit * 2.1;
             else r += Math.sin(a * 3 + f * 3.5 + elapsed * .23) * unit * (.08 + bass * .035 + pulse * .025);
+            r += (spectralFold * .20 - spectralCurl * .07) * unit * Math.min(1, f * 3);
             r += Math.sin(a * 9 + f * 7 - elapsed * .6) * unit * high * .006;
-            const angle = a + Math.sin(f * 4 + elapsed * .18) * (.12 + mid * .12);
+            const angle = a + Math.sin(f * 4 + elapsed * .18) * (.12 + mid * .12 + spectralCurl * .13);
             x = Math.cos(angle) * r * (s.scene === 'currents' ? 1.12 : 1);
             y = Math.sin(angle) * r * (s.scene === 'currents' ? .89 : 1);
           }
@@ -432,11 +538,19 @@ export default function Visualizer({ settings, analyser, playing, canvasRef }: P
       }
       if (!s.frozen) {
         sampleAudio(dt);
-        if (!reducedMotion) elapsed += dt * (clamp(s.speed, 0, 2) * 1.6
-          + (visualFeatures.energy * .45 + visualFeatures.pulse * 1.2 + visualFeatures.flux * .65) * clamp(s.intensity));
+        const musicLed = s.reactive && latest.current.playing && !!latest.current.analyser;
+        if (!reducedMotion) elapsed += dt * (clamp(s.speed, 0, 2) * (musicLed ? .10 : .75)
+          + (visualFeatures.energy * 1.5 + visualFeatures.pulse * .80 + visualFeatures.flux * .80) * clamp(s.intensity));
         smoothX += (pointerX - smoothX) * (1 - Math.exp(-dt * 3));
         smoothY += (pointerY - smoothY) * (1 - Math.exp(-dt * 3));
       }
+      const renderedMotion = s.reactive ? (reducedMotion ? .15 : 1) : 0;
+      canvas.dataset.visualBass = (visualFeatures.bass * renderedMotion).toFixed(3);
+      canvas.dataset.visualMid = (visualFeatures.mid * renderedMotion).toFixed(3);
+      canvas.dataset.visualTreble = (visualFeatures.treble * renderedMotion).toFixed(3);
+      canvas.dataset.visualEnergy = (visualFeatures.energy * renderedMotion).toFixed(3);
+      canvas.dataset.visualPulse = (visualFeatures.pulse * renderedMotion).toFixed(3);
+      canvas.dataset.visualPhase = elapsed.toFixed(3);
       if (gl && program && !gl.isContextLost()) {
         gl.uniform2f(uniforms.uResolution, width, height);
         gl.uniform2f(uniforms.uPointer, reducedMotion ? 0 : smoothX, reducedMotion ? 0 : smoothY);

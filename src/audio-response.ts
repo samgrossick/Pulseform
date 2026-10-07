@@ -15,7 +15,7 @@ const clamp = (value: number) => Math.max(0, Math.min(1, value));
 const follow = (value: number, target: number, dt: number, attack: number, release: number) =>
   value + (target - value) * (1 - Math.exp(-dt / (target > value ? attack : release)));
 
-/** Diffuses accurate transient detection into rolling motion, with no phase jumps. */
+/** Quick musical attacks with smooth decay, rather than averaging away beats. */
 export class LiquidMotion {
   private state = silentAudioFeatures();
 
@@ -24,7 +24,7 @@ export class LiquidMotion {
   update(target: AudioFeatures, deltaSeconds: number): AudioFeatures {
     const dt = Math.max(0, Math.min(.1, deltaSeconds));
     for (const key of Object.keys(this.state) as (keyof AudioFeatures)[]) {
-      this.state[key] = follow(this.state[key], target[key], dt, key === 'pulse' ? .21 : .18, key === 'treble' ? .65 : .80);
+      this.state[key] = follow(this.state[key], target[key], dt, key === 'pulse' ? .025 : .035, key === 'treble' ? .16 : .24);
     }
     return { ...this.state };
   }
@@ -49,6 +49,7 @@ export class AudioResponse {
   private crest = 0;
   private cooldown = 0;
   private previousSpectrum = new Float32Array(0);
+  private priming = false;
 
   reset() {
     this.peaks = [.055, .035, .018];
@@ -59,6 +60,14 @@ export class AudioResponse {
     this.rmsPeak = .12;
     this.previousRms = 0;
     this.energy = this.pulse = this.flux = this.crest = this.cooldown = 0;
+    this.priming = false;
+  }
+
+  /** Seed a new passage without mistaking the seek itself for a drum hit. */
+  prime(frequencies: Float32Array, waveform: Float32Array, sampleRate: number, fftSize: number) {
+    this.reset();
+    this.priming = true;
+    this.update(frequencies, waveform, sampleRate, fftSize, .001);
   }
 
   update(frequencies: Float32Array, waveform: Float32Array, sampleRate: number, fftSize: number, deltaSeconds: number): AudioFeatures {
@@ -84,16 +93,23 @@ export class AudioResponse {
       if (hz >= 30 && hz < 16000) {
         const band = hz < 220 ? 0 : hz < 2500 ? 1 : 2;
         bandPower[band] += amplitude * amplitude;
-        positiveFlux += Math.max(0, amplitude - this.previousSpectrum[i]);
+        if (!this.priming) positiveFlux += Math.max(0, amplitude - this.previousSpectrum[i]);
         totalAmplitude += amplitude;
       }
       this.previousSpectrum[i] = amplitude;
     }
     const raw = bandPower.map(value => Math.sqrt(value));
+    if (this.priming) {
+      this.previousBands = raw;
+      this.previousRms = rms;
+      this.lowBaseline = raw[0];
+      this.priming = false;
+    }
     const floors = [.035, .025, .012];
     const normalized = raw.map((value, i) => {
       this.peaks[i] = Math.max(floors[i], follow(this.peaks[i], value, dt, .035, 3.5));
-      return clamp(value / Math.max(floors[i], this.peaks[i] * 1.05)) * gate;
+      // Fixed references preserve quiet/loud contrast. Peaks serve onset detection.
+      return Math.sqrt(clamp(value / [.32, .24, .16][i])) * gate;
     });
     const lowRise = Math.max(0, raw[0] - this.previousBands[0]) / Math.max(.025, this.peaks[0]);
     const rmsRise = Math.max(0, rms - this.previousRms) / Math.max(.04, this.rmsPeak);
@@ -106,7 +122,7 @@ export class AudioResponse {
     }
     this.lowBaseline = follow(this.lowBaseline, raw[0], dt, .22, .28);
     this.rmsPeak = Math.max(.07, follow(this.rmsPeak, rms, dt, .045, 4));
-    this.energy = follow(this.energy, clamp(rms / (this.rmsPeak * 1.1)) * gate, dt, .018, .22);
+    this.energy = follow(this.energy, Math.sqrt(clamp(rms / .45)) * gate, dt, .018, .22);
     this.flux = follow(this.flux, clamp(positiveFlux / Math.max(.08, totalAmplitude) * 3.0) * gate, dt, .012, .13);
     this.crest = follow(this.crest, clamp((peak / Math.max(.001, rms) - 1.15) / 3.5) * gate, dt, .018, .16);
     normalized.forEach((value, i) => { this.levels[i] = follow(this.levels[i], value, dt, .014, i === 0 ? .19 : .13); });

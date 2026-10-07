@@ -21,7 +21,8 @@ Art direction: dreamy liquid-colour ribbons, organic deformation and slow contin
 - Bass guides broad swells and flowing deformation.
 - Mids bend and advect the ribbons.
 - Highs add restrained shimmer and texture.
-- Transients are measured quickly, then softened into visual motion with a slower envelope.
+- Attacks register within tens of milliseconds; short smooth releases retain fluid motion without smearing beats. Fixed loudness references preserve quiet/loud contrast.
+- Every scene uses spatial frequency detail to change shape. During playback, music drives flow more strongly than the ambient clock. Seeking clears old envelopes and primes the new passage without inventing a beat.
 - Silence decays to ambient flow. Disabling music response removes audio modulation. Freeze stops motion completely.
 - Pointer movement gently bends the field. Reduced-motion preferences suppress continuous motion.
 

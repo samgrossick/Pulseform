@@ -3,7 +3,7 @@
 A static, browser-only psychedelic music studio. Built with React, TypeScript, Web Audio, WebGL and an Astra-authored visual engine.
 
 - Import local MP3, WAV, FLAC, OGG, M4A and other formats supported by your browser.
-- Four interactive scenes: Currents, Bloom, Afterhours and Oscilloscope. Three preset palettes plus four custom colours, intensity, motion, detail, grain, freeze, image capture and fullscreen. Real audio features guide smooth, organic deformation.
+- Four interactive scenes: Currents, Bloom, Afterhours and Oscilloscope. Three preset palettes plus four custom colours, intensity, motion, detail, grain, freeze, image capture and fullscreen. Live frequency detail shapes every scene, with fast musical attacks, smooth decay and preserved quiet/loud contrast. Seeking refreshes analysis history for the new passage.
 - Seven-band EQ, playback, seeking, master volume and looping.
 - Quick split creates approximate vocals/lead, drums, bass and other layers without a model download. Optional HTDemucs AI stems offer cleaner separation. Both run in dedicated browser workers, with level, mute and solo controls.
 - An original synth demo with its actual source tracks lets you explore immediately. Its Vocals channel contains the synth lead.
@@ -73,9 +73,10 @@ With the dev server running, Chrome installed and Playwright dependencies instal
 ```sh
 node scripts/browser-check.mjs
 node scripts/quick-check.mjs
+node scripts/reactivity-check.mjs
 ```
 
-The quick check times a three-minute synthetic stereo file and checks cancellation, no model download and solo/mute playback. Set `PULSEFORM_TEST_STEMS=1` to additionally exercise real model inference on an original two-second synthetic WAV. Set `PULSEFORM_TEST_URL` to check a production preview instead. Screenshots are written to `.cache/`.
+The quick check times a three-minute synthetic stereo file and checks cancellation, no model download and solo/mute playback. The reactivity check compares actual rendered frames and visual envelopes while seeking between bass, mid, treble, quiet and silent sections. Set `PULSEFORM_TEST_STEMS=1` to additionally exercise real model inference on an original two-second synthetic WAV. Set `PULSEFORM_TEST_URL` to check a production preview instead. Screenshots are written to `.cache/`.
 
 ## Credits
 
